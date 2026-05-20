@@ -75,13 +75,18 @@ def parse_args():
                         help='Path to the directory containing the model weights. Default: \'saved_models\'')
 
     parser.add_argument('--model_a_path', dest='model_a_path',
-                        default='s1_glint360k_r50_512d_gmdb__v1.1.0_bs64_size112_channels3_last_model.pth',
+                        default='s1_glint360k_r50_512d_gmdb__v1.1.2_bs64_size112_channels3_last_model.pth',
                         help='Name of the file containing the weights for model A.')
     parser.add_argument('--model_b_path', dest='model_b_path',
-                        default='s2_glint360k_r100_512d_gmdb__v1.1.0_bs128_size112_channels3_last_model.pth',
+                        default='s2_glint360k_r100_512d_gmdb__v1.1.2_bs128_size112_channels3_last_model.pth',
                         help='Name of the file containing the weights for model B.')
     parser.add_argument('--model_c_path', dest='model_c_path', default='glint360k_r100.onnx',
                         help='Name of the file containing the weights for model C.')
+
+    parser.add_argument('--no_flip_tta', action='store_true', default=False,
+                        help='Disable horizontal flip test-time augmentation.')
+    parser.add_argument('--no_gray_tta', action='store_true', default=False,
+                        help='Disable grayscale test-time augmentation.')
 
     parser.add_argument('--img_size', default='112', type=int,
                         help='Image size to use when inferring/predicting. Default: 112')
@@ -132,9 +137,11 @@ def predict(models, device, img_paths, args):
                     f = open(os.path.join(args.save_dir, f"{img_name.rsplit('_', 1)[0]}_encoding.csv"), "w+")
                     f.write(f"img_name;model;flip;gray;class_conf;representations\n")
 
-            for idx, model in enumerate(models):
-                for flip in [False, True]:
-                    for gray in [False, True]:
+            flip_modes = [False] if args.no_flip_tta else [False, True]
+            gray_modes = [False] if args.no_gray_tta else [False, True]
+            for model_label, model in models:
+                for flip in flip_modes:
+                    for gray in gray_modes:
                         img_p = preprocess(img,
                                            img_size,
                                            gray=gray,
@@ -153,10 +160,10 @@ def predict(models, device, img_paths, args):
                         # check if we want to use half-precision: has similar or better acc. and smaller size on disk
 
                         if args.save_as_pickle:
-                            df.loc[len(df)] = [img_name, f"m{idx}", int(flip), int(gray), pred,
+                            df.loc[len(df)] = [img_name, model_label, int(flip), int(gray), pred,
                                                pred_rep.squeeze().tolist()]
                         else:  # csv-file
-                            f.write(f"{img_name};m{idx};{int(flip)};{int(gray)};{pred};{pred_rep.squeeze().tolist()}\n")
+                            f.write(f"{img_name};{model_label};{int(flip)};{int(gray)};{pred};{pred_rep.squeeze().tolist()}\n")
 
             if args.separate_outputs and args.save_as_pickle:
                 df.to_pickle(os.path.join(args.save_dir, f"{img_name.rsplit('_', 1)[0]}_encoding.pkl"))
@@ -264,14 +271,14 @@ def main():
     if args.model_a_path != "None":
         model1 = get_model(os.path.join(args.weight_dir, args.model_a_path), device=device)
         model1.eval()
-        models.append(model1)
+        models.append(("m0", model1))
 
     # finetuned r100
     model2 = None
     if args.model_b_path != "None":
         model2 = get_model(os.path.join(args.weight_dir, args.model_b_path), device=device)
         model2.eval()
-        models.append(model2)
+        models.append(("m1", model2))
 
     # original r100
     model3 = None
@@ -281,7 +288,7 @@ def main():
         except(PermissionError):
             model3 = get_model(os.path.join(args.weight_dir, "glint360k_r100.pth"), device=device)
         model3.eval()
-        models.append(model3)
+        models.append(("m2", model3))
     print(device)
     predict(models, device, aligned_img_paths, args)
 
