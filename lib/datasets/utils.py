@@ -15,9 +15,32 @@ def get_train_and_val_datasets(
         base_dir,
         lookup_table=None,
         aspect_ratio=False,
-        img_postfix='_crop_square'):
+        img_postfix='_crop_square',
+        imgs_dir='',
+        train_csv='',
+        val_csv=''):
 
-    if dataset == 'gmdb':
+    if train_csv and val_csv and imgs_dir:
+        dataset_train = GestaltMatcherDataset(
+            in_channels=color_channels,
+            img_postfix=img_postfix,
+            target_size=img_size,
+            imgs_dir=imgs_dir,
+            target_file_path=train_csv,
+            lookup_table=lookup_table,
+            aspect_ratio=aspect_ratio)
+
+        dataset_val = GestaltMatcherDataset(
+            in_channels=color_channels,
+            img_postfix=img_postfix,
+            target_size=img_size,
+            augment=False,
+            imgs_dir=imgs_dir,
+            target_file_path=val_csv,
+            lookup_table=(lookup_table if lookup_table else dataset_train.get_lookup_table()),
+            aspect_ratio=aspect_ratio)
+
+    elif dataset == 'gmdb':
         dataset_train = GestaltMatcherDataset(
             in_channels=color_channels,
             img_postfix=img_postfix,

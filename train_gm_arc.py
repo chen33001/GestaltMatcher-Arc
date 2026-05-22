@@ -8,7 +8,6 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_sched
 from torch.utils.data import random_split
-from torch.utils.tensorboard import SummaryWriter
 
 from lib.datasets.utils import get_train_and_val_datasets
 from lib.models.my_arcface import MyArcFace
@@ -48,20 +47,32 @@ def parse_args():
                         help='input image size of the model (default: 100)')
     parser.add_argument('--unfreeze', action='store_false', default=True, dest='freeze',
                         help='flag to set if you want to unfreeze the base model weights.')
+    parser.add_argument('--init_ckpt', default='', dest='init_ckpt',
+                        help='Optional checkpoint path used to initialize model weights before fine-tuning.')
+    parser.add_argument('--reinit_classifier', action='store_true', default=False,
+                        help='When loading --init_ckpt, skip classifier weights and keep a newly initialized head.')
 
     # Dataset parameters
     parser.add_argument('--dataset', default='gmdb', dest='dataset',
                         help='which dataset to use. (Options: "casia", "gmdb")')
     parser.add_argument('--dataset_type', default='', dest='dataset_type',
                         help='type of the dataset to use, e.g. normal (="") or augmented(="aug") (default="")')
-    parser.add_argument('--dataset_version', default='v1.0.3', dest='dataset_version', type=str,
-                        help='version of the dataset to use (default="v1.0.3")')
+    parser.add_argument('--dataset_version', default='v1.1.2', dest='dataset_version', type=str,
+                        help='version of the dataset to use (default="v1.1.2")')
     parser.add_argument('--lookup_table', default='', dest='lookup_table_path',
                         help='lookup table path, use if you want to load path instead of generation a lookup table (default = "")')
 
     # File locations
     parser.add_argument('--data_dir', default='C:/Users/Alexander/Documents/data', dest='data_dir',
                         help='Location of the data directory (not dataset). (default = home pc)')
+    parser.add_argument('--imgs_dir', default='', dest='imgs_dir',
+                        help='Optional explicit aligned image directory for custom training CSVs.')
+    parser.add_argument('--train_csv', default='', dest='train_csv',
+                        help='Optional explicit training CSV with image_id,subject,label columns.')
+    parser.add_argument('--val_csv', default='', dest='val_csv',
+                        help='Optional explicit validation CSV with image_id,subject,label columns.')
+    parser.add_argument('--img_postfix', default='_aligned', dest='img_postfix',
+                        help='Postfix appended by the dataset loader before .jpg. Default: _aligned')
     parser.add_argument('--weight_dir', default='saved_models', dest='weight_dir',
                         help='Location of the model weights directory. (default = "saved_models")')
 
@@ -76,6 +87,46 @@ def parse_args():
     return parser.parse_args()
 
 
+def checkpoint_state_dict(checkpoint):
+    if isinstance(checkpoint, torch.nn.Module):
+        return checkpoint.state_dict()
+    if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+        return checkpoint["state_dict"]
+    if isinstance(checkpoint, dict):
+        return checkpoint
+    raise TypeError(f"Unsupported checkpoint type: {type(checkpoint)}")
+
+
+def load_initial_checkpoint(model, checkpoint_path, device, reinit_classifier=False):
+    print(f"Loading initial checkpoint from {checkpoint_path}")
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    except TypeError:
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+    state_dict = checkpoint_state_dict(checkpoint)
+
+    if reinit_classifier:
+        state_dict = {
+            key: value
+            for key, value in state_dict.items()
+            if not key.startswith("classifier.")
+        }
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        print("Loaded checkpoint with classifier reinitialized.")
+        print(f"Missing keys: {missing}")
+        print(f"Unexpected keys: {unexpected}")
+        return
+
+    try:
+        model.load_state_dict(state_dict, strict=True)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"Could not load checkpoint strictly from {checkpoint_path}. "
+            "If the class count differs, rerun with --reinit_classifier."
+        ) from exc
+    print("Loaded checkpoint strictly.")
+
+
 # Training loop
 def train(args, model, device, train_loader, optimizer, epochs=-1, val_loader=None, scheduler=None):
     model.train()
@@ -85,6 +136,13 @@ def train(args, model, device, train_loader, optimizer, epochs=-1, val_loader=No
 
     # Tensorboard Writer
     if args.use_tensorboard:
+        try:
+            from torch.utils.tensorboard import SummaryWriter
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "TensorBoard is required when --use_tensorboard is set. "
+                "Install tensorboard or rerun without --use_tensorboard."
+            ) from exc
         writer = SummaryWriter(
             comment=f"s{args.session}_{args.model_type}_512d_{args.dataset}_{args.dataset_type}"
                     f"_{args.dataset_version}_bs{args.batch_size}_size{args.img_size}_channels{args.in_channels}")
@@ -304,7 +362,10 @@ def main():
     # Create and get the training and validation datasets
     dataset_train, dataset_val = get_train_and_val_datasets(args.dataset, args.dataset_type, args.dataset_version,
                                                             args.img_size, args.in_channels, args.data_dir,
-                                                            img_postfix='_aligned')
+                                                            img_postfix=args.img_postfix,
+                                                            imgs_dir=args.imgs_dir,
+                                                            train_csv=args.train_csv,
+                                                            val_csv=args.val_csv)
 
     # Get the number of classes from the dataset
     args.num_classes = dataset_train.get_num_classes()
@@ -349,9 +410,13 @@ def main():
     print(f"Weighted cross entropy weights: {args.ce_weights}")
 
     # Create model
-    model = MyArcFace(args.num_classes, dataset_base=f'saved_models/{args.model_type}.onnx', device=device, freeze=True).to(device)
+    model = MyArcFace(args.num_classes, dataset_base=f'{args.weight_dir}/{args.model_type}.onnx',
+                      device=device, freeze=args.freeze).to(device)
     print(f"Created {'frozen ' if args.freeze else ''}{args.model_type} model with {args.in_channels} in channel"
           f"{'s' if args.in_channels > 1 else ''}, 512d feature dimensionality and {args.num_classes} classes")
+
+    if args.init_ckpt:
+        load_initial_checkpoint(model, args.init_ckpt, device, reinit_classifier=args.reinit_classifier)
 
     # Set log intervals
     args.log_interval = args.log_interval // args.batch_size
