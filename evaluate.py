@@ -49,6 +49,49 @@ def parse_args():
                         help='Disable printing the results.')
     return parser.parse_args()
 args = parse_args()
+metadata_files = {}
+
+
+def _pick_existing_file(pattern, preferred_file=''):
+    if preferred_file and os.path.exists(preferred_file):
+        return preferred_file
+    matches = sorted(glob(pattern))
+    if not matches:
+        return ''
+    return matches[0]
+
+
+def _resolve_metadata_files(metadata_dir):
+    train_csvs = sorted(glob(os.path.join(metadata_dir, 'gmdb_train_images_*.csv')))
+    version = ''
+    if train_csvs:
+        name = os.path.basename(train_csvs[0])
+        version = name.replace('gmdb_train_images_', '').replace('.csv', '')
+
+    syndromes = _pick_existing_file(
+        os.path.join(metadata_dir, 'gmdb_syndromes_*.tsv'),
+        os.path.join(metadata_dir, f'gmdb_syndromes_{version}.tsv') if version else ''
+    )
+    freq_gallery = _pick_existing_file(
+        os.path.join(metadata_dir, 'gmdb_frequent_gallery_images_*.csv'),
+        os.path.join(metadata_dir, f'gmdb_frequent_gallery_images_{version}.csv') if version else ''
+    )
+    rare_gallery = _pick_existing_file(
+        os.path.join(metadata_dir, 'gmdb_rare_gallery_images_*.csv'),
+        os.path.join(metadata_dir, f'gmdb_rare_gallery_images_{version}.csv') if version else ''
+    )
+
+    required = {
+        'syndromes': syndromes,
+        'freq_gallery': freq_gallery,
+        'rare_gallery': rare_gallery,
+    }
+    missing = [k for k, v in required.items() if not v]
+    if missing:
+        raise FileNotFoundError(
+            f"Missing required metadata files in '{metadata_dir}': {missing}"
+        )
+    return required
 
 
 # TODO: This is the direction we're probably heading into w.r.t. the script
@@ -111,7 +154,7 @@ args = parse_args()
 
 # Used to belong to evaluate.py - keeping a backup here in case we need it ...
 def evaluate(all_df, case_df, gallery='all', metadata_dir=''):
-    synds = pd.read_csv(os.path.join(metadata_dir, 'gmdb_syndromes_v1.1.0.tsv'),
+    synds = pd.read_csv(metadata_files['syndromes'],
                         delimiter='\t',
                         usecols=['syndrome_id', 'syndrome_name'])
 
@@ -121,8 +164,8 @@ def evaluate(all_df, case_df, gallery='all', metadata_dir=''):
         synd_lookup_table = np.array(json.loads(line))
 
     # Get gallery set info
-    gallery_df1 = pd.read_csv(os.path.join(metadata_dir, 'gmdb_frequent_gallery_images_v1.1.0.csv'))
-    gallery_df2 = pd.read_csv(os.path.join(metadata_dir, 'gmdb_rare_gallery_images_v1.1.0.csv'))\
+    gallery_df1 = pd.read_csv(metadata_files['freq_gallery'])
+    gallery_df2 = pd.read_csv(metadata_files['rare_gallery'])\
         .drop("split", axis=1).drop_duplicates()    # remove 'split'-column and then remove duplicates
     if gallery in ['all', 'unified', 'freq+rare', 'rare+freq']:
         gallery_df = pd.concat([gallery_df1, gallery_df2])
@@ -190,7 +233,7 @@ def get_first_synds(ranked_synd_ids, ranked_mean_dists, ranked_img_ids, ranked_s
          range(len(ranked_synd_ids))])  # Expected shape: [num_images_test, num_images_gallery]
 
     if verbose:
-        synds = pd.read_csv(os.path.join(args.metadata_dir, 'gmdb_syndromes_v1.1.0.tsv'),
+        synds = pd.read_csv(metadata_files['syndromes'],
                             delimiter='\t',
                             usecols=['syndrome_id', 'syndrome_name'])
         for aa in ranked_img_ids:
@@ -212,7 +255,7 @@ def get_first_subject(ranked_synd_ids, ranked_mean_dists, ranked_img_ids, ranked
                           range(len(ranked_subject_ids))])  # Expected shape: [num_images_test, num_images_gallery]
 
     if verbose:
-        synds = pd.read_csv(os.path.join(args.metadata_dir, 'gmdb_syndromes_v1.1.0.tsv'),
+        synds = pd.read_csv(metadata_files['syndromes'],
                             delimiter='\t',
                             usecols=['syndrome_id', 'syndrome_name'])
         for aa in ranked_img_ids:
@@ -304,6 +347,7 @@ def save_to_json(results, output_dir, output_file):
 
 
 def main():
+    global metadata_files
     start_time = time.time()
     # Seed everything
     np.random.seed(args.seed)
@@ -312,7 +356,12 @@ def main():
 
     # Location of the GMDB meta data
     if args.metadata_dir == '':
-        args.metadata_dir = os.path.join('..', 'data', 'GestaltMatcherDB', 'v1.1.0', 'gmdb_metadata')
+        candidates = sorted(glob(os.path.join('..', 'data', 'GestaltMatcherDB', '*', 'gmdb_metadata')))
+        if not candidates:
+            raise FileNotFoundError("Could not auto-detect metadata dir under ../data/GestaltMatcherDB/*/gmdb_metadata")
+        args.metadata_dir = candidates[-1]
+
+    metadata_files = _resolve_metadata_files(args.metadata_dir)
 
     # Load and combine all encodings
     # args.separate_files_gallery
@@ -339,7 +388,7 @@ def main():
     evaluate_finished_time = time.time()
     # TEST PRINT DISORDER NAMES
     stuff = all_ranks[0,0,:n]
-    synds = pd.read_csv(os.path.join(args.metadata_dir, 'gmdb_syndromes_v1.1.0.tsv'),
+    synds = pd.read_csv(metadata_files['syndromes'],
                         delimiter='\t',
                         usecols=['syndrome_id', 'syndrome_name', 'OMIM'])
     if not args.silence:
