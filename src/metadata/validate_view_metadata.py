@@ -47,7 +47,8 @@ def parse_args():
 
 
 def expected_view_from_source_path(source_path, allowed_views):
-    normalized = f"/{str(source_path).replace('\\', '/').lower().strip('/')}/"
+    normalized_path = str(source_path).replace("\\", "/").lower().strip("/")
+    normalized = f"/{normalized_path}/"
     for view in allowed_views:
         if view in {"unknown", "exclude"}:
             continue

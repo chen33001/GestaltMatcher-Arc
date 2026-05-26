@@ -44,6 +44,12 @@ def parse_args():
     parser.add_argument("--split_col", default="split", help="Metadata split column.")
     parser.add_argument("--view_col", default="view", help="Metadata view column.")
     parser.add_argument(
+        "--require_aligned",
+        action="store_true",
+        help="Keep only rows where is_aligned is true.",
+    )
+    parser.add_argument("--aligned_col", default="is_aligned", help="Metadata aligned-status column.")
+    parser.add_argument(
         "--drop_missing_label",
         action="store_true",
         default=True,
@@ -70,6 +76,8 @@ def main():
     required.add(args.image_id_from_col or args.image_id_col)
     if args.views:
         required.add(args.view_col)
+    if args.require_aligned:
+        required.add(args.aligned_col)
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"Missing required columns in {metadata_path}: {sorted(missing)}")
@@ -77,6 +85,12 @@ def main():
     filtered = df[df[args.split_col].isin(args.splits)].copy()
     if args.views:
         filtered = filtered[filtered[args.view_col].isin(args.views)].copy()
+    if args.require_aligned:
+        aligned_values = filtered[args.aligned_col]
+        if aligned_values.dtype == bool:
+            filtered = filtered[aligned_values].copy()
+        else:
+            filtered = filtered[aligned_values.astype(str).str.lower().isin(["true", "1", "yes"])].copy()
 
     if args.drop_missing_label:
         filtered = filtered[filtered[args.label_col].notna()]
