@@ -29,6 +29,8 @@ def parse_args():
     parser.add_argument("--view_col", default="view", help="View column.")
     parser.add_argument("--frontal_view", default="frontal", help="Frontal view label.")
     parser.add_argument("--profile_view", default="profile", help="Profile view label.")
+    parser.add_argument("--frontal_weight", type=float, default=1.0, help="Multiplier applied to frontal vectors.")
+    parser.add_argument("--profile_weight", type=float, default=1.0, help="Multiplier applied to profile vectors.")
     parser.add_argument("--model", default="fusion_concat", help="Model label for fused rows.")
     return parser.parse_args()
 
@@ -51,6 +53,10 @@ def parse_representation(value):
         except json.JSONDecodeError:
             return np.asarray(ast.literal_eval(value), dtype=np.float32)
     return np.asarray(value, dtype=np.float32)
+
+
+def filename_stem(value):
+    return Path(str(value)).stem
 
 
 def with_metadata(encodings, metadata, args, expected_view):
@@ -97,19 +103,24 @@ def main():
     for row in paired.itertuples(index=False):
         frontal_vec = getattr(row, "representations_frontal")
         profile_vec = getattr(row, "representations_profile")
-        fused = np.concatenate([frontal_vec, profile_vec]).astype(np.float32)
+        fused = np.concatenate([
+            frontal_vec * args.frontal_weight,
+            profile_vec * args.profile_weight,
+        ]).astype(np.float32)
         pair_id = getattr(row, args.pair_col)
+        frontal_img_name = getattr(row, f"{args.encoding_key}_frontal")
+        profile_img_name = getattr(row, f"{args.encoding_key}_profile")
         rows.append(
             {
-                "img_name": f"{pair_id}_fusion",
+                "img_name": f"{pair_id}_{filename_stem(frontal_img_name)}_{filename_stem(profile_img_name)}_fusion",
                 "model": args.model,
                 "flip": int(getattr(row, "flip")),
                 "gray": int(getattr(row, "gray")),
                 "class_conf": "",
                 "representations": fused.tolist(),
                 "pair_id": pair_id,
-                "frontal_img_name": getattr(row, f"{args.encoding_key}_frontal"),
-                "profile_img_name": getattr(row, f"{args.encoding_key}_profile"),
+                "frontal_img_name": frontal_img_name,
+                "profile_img_name": profile_img_name,
                 "frontal_model": getattr(row, "model_frontal"),
                 "profile_model": getattr(row, "model_profile"),
             }

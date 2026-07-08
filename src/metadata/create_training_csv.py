@@ -41,6 +41,16 @@ def parse_args():
     )
     parser.add_argument("--subject_col", default="subject_id", help="Metadata subject column.")
     parser.add_argument("--label_col", default="label", help="Metadata label column.")
+    parser.add_argument(
+        "--label_allowlist_csv",
+        default="",
+        help="Optional CSV whose label values define the labels to keep, e.g. the matching train CSV.",
+    )
+    parser.add_argument(
+        "--label_allowlist_col",
+        default="label",
+        help="Label column in --label_allowlist_csv.",
+    )
     parser.add_argument("--split_col", default="split", help="Metadata split column.")
     parser.add_argument("--view_col", default="view", help="Metadata view column.")
     parser.add_argument(
@@ -95,6 +105,15 @@ def main():
     if args.drop_missing_label:
         filtered = filtered[filtered[args.label_col].notna()]
         filtered = filtered[filtered[args.label_col].astype(str).str.len() > 0]
+
+    if args.label_allowlist_csv:
+        allowlist = pd.read_csv(args.label_allowlist_csv)
+        if args.label_allowlist_col not in allowlist.columns:
+            raise ValueError(
+                f"Label allowlist column '{args.label_allowlist_col}' not found in {args.label_allowlist_csv}"
+            )
+        allowed_labels = set(allowlist[args.label_allowlist_col].dropna().astype(str))
+        filtered = filtered[filtered[args.label_col].astype(str).isin(allowed_labels)]
 
     if filtered.empty:
         raise ValueError("No metadata rows matched the requested filters.")
