@@ -282,10 +282,16 @@ def validate(model, device, val_loader, args, out=False):
     top_5_acc = torch.true_divide(top_5_acc, val_size).item()
 
     # calculate the mean of the average performance per class
-    mean_average_top_1 = np.mean([np.mean([(class_idx == prediction[0]) for prediction in class_pred_list])
-                                  for class_idx, class_pred_list in enumerate(pred_per_class)])
-    mean_average_top_5 = np.mean([np.mean([(class_idx in prediction) for prediction in class_pred_list])
-                                  for class_idx, class_pred_list in enumerate(pred_per_class)])
+    mean_average_top_1 = np.mean([
+        np.mean([(class_idx == prediction[0]) for prediction in class_pred_list])
+        for class_idx, class_pred_list in enumerate(pred_per_class)
+        if class_pred_list
+    ])
+    mean_average_top_5 = np.mean([
+        np.mean([(class_idx in prediction) for prediction in class_pred_list])
+        for class_idx, class_pred_list in enumerate(pred_per_class)
+        if class_pred_list
+    ])
 
     model.train()
 
